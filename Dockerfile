@@ -1,5 +1,5 @@
 # 使用官方 Python 3.9 slim 镜像作为基础
-FROM opencompass-base:latest
+FROM opencompass:latest
 
 # 设置工作目录
 WORKDIR /opencompass
