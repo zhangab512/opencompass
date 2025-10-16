@@ -1,4 +1,4 @@
-# 使用官方 Python 3.9 slim 镜像作为基础
+# 使用官方 Python 3.10 slim 镜像作为基础
 FROM opencompass:latest
 
 # 设置工作目录
