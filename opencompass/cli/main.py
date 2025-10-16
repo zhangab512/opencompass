@@ -16,6 +16,8 @@ from opencompass.utils import (LarkReporter, get_logger, pretty_print_config,
                                read_from_station, save_to_station)
 from opencompass.utils.run import (fill_eval_cfg, fill_infer_cfg,
                                    get_config_from_arg)
+import requests
+import time
 
 
 def parse_args():
@@ -262,6 +264,30 @@ def main():
     else:
         cfg.setdefault('work_dir', os.path.join('outputs', 'default'))
 
+    logger.info(f'serverurl is {args.serverurl}')
+    if args.serverurl:
+        os.environ["SERVER_URL"] = args.serverurl
+
+    logger.info(f'serverindex is {args.serverindex}')
+    if args.serverindex:
+        os.environ["SERVER_INDEX"] = args.serverindex
+
+    logger.info(f'isdone is {args.isdone}')
+    if args.isdone:
+        os.environ["IS_DONE"] = args.isdone
+
+    logger.info(f'modelname is {args.modelname}')
+    if args.modelname:
+        os.environ["MODEL_NAME"] = args.modelname
+
+    # check if the serverurl is ready
+    while True:
+        try:
+            _ = requests.get(args.serverurl, timeout=1)
+            break
+        except:
+            logger.info(f"server is not ready, waiting 5 seconds")
+            time.sleep(5)
     # cfg_time_str defaults to the current time
     cfg_time_str = dir_time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
     if args.reuse:

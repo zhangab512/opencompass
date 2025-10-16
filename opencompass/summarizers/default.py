@@ -6,7 +6,12 @@ import math
 import os.path as osp
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
+import json
+import os
+import re
+import sys
+import time
+import requests
 import mmengine
 import tabulate
 from mmengine import ConfigDict
@@ -372,6 +377,143 @@ class DefaultSummarizer:
             f.write(md_table)
         print(f'\n\nThe markdown format results is as below:\n\n{md_table}')
         self.logger.info(f'write markdown summary to {osp.abspath(output_md_path)}')
+
+        self.logger.info(f'start to update task status')
+        keys = os.getenv('KEYS', '')
+        model_name = os.getenv('MODEL_NAME', '')
+        ceval_numbers, cmmlu_numbers, mmlu_numbers, gaokao_numbers, bbh_numbers, agieval_numbers = self.process_file(
+            osp.abspath(output_csv_path), keys)
+
+        score1 = score2 = score3 = score4 = score5 = score6 = 0
+        score1_format = score2_format = score3_format = score4_format = score5_format = score6_format = 0
+        if ceval_numbers:
+            score1 = sum(ceval_numbers) / len(ceval_numbers)
+            score1_format = float("{:.2f}".format(score1))
+            self.logger.info(f'c-eval 平均值: {score1_format}')
+        if cmmlu_numbers:
+            score2 = sum(cmmlu_numbers) / len(cmmlu_numbers)
+            score2_format = float("{:.2f}".format(score2))
+            self.logger.info(f'cmmlu 平均值: {score2_format}')
+        if mmlu_numbers:
+            score3 = sum(mmlu_numbers) / len(mmlu_numbers)
+            score3_format = float("{:.2f}".format(score3))
+            self.logger.info(f'mmlu 平均值: {score3_format}')
+        if gaokao_numbers:
+            score4 = sum(gaokao_numbers) / len(gaokao_numbers)
+            score4_format = float("{:.2f}".format(score4))
+            self.logger.info(f'gaokao 平均值: {score4_format}')
+        if bbh_numbers:
+            score5 = sum(bbh_numbers) / len(bbh_numbers)
+            score5_format = float("{:.2f}".format(score5))
+            self.logger.info(f'bbh 平均值: {score5_format}')
+        if agieval_numbers:
+            score6 = sum(agieval_numbers) / len(agieval_numbers)
+            score6_format = float("{:.2f}".format(score6))
+            self.logger.info(f'agieval 平均值: {score6_format}')
+
+        score_config = {
+            "model_name": model_name,
+            "c-eval": score1_format,
+            "cmmlu": score2_format,
+            "mmlu": score3_format,
+            "gaokao": score4_format,
+            "bbh": score5_format,
+            "agieval": score6_format
+        }
+
+        self.execute_sql(score_config)
+
+        is_done = os.getenv('IS_DONE', '')
+        index_str = os.getenv('SERVER_INDEX', '')
+        index = int(index_str)
+        if 'done' == is_done:
+            print('打分完成')
+
+            task_str = os.getenv('TASK_ID', '')
+            delete_server_url = "http://kubeflow-dashboard.infra/indicators/delete/server/%s" % (str(task_str))
+            requests.get(delete_server_url)
+
+            sys.exit(0)
+        else:
+            task_str = os.getenv('TASK_ID', '')
+            delete_server_url = "http://kubeflow-dashboard.infra/indicators/delete/server/%s" % (str(task_str))
+            requests.get(delete_server_url)
+
+            time.sleep(20)
+
+            inner_url = "http://kubeflow-dashboard.infra/indicators/start/%s/%s" % (str(task_str), str(index + 1))
+            requests.get(inner_url)
+
+
+def process_file(self, file_path, keys):
+    # 用于存储ceaval和cmmlu行的数字
+    ceval_numbers = []
+    cmmlu_numbers = []
+    mmlu_numbers = []
+    gaokao_numbers = []
+    bbh_numbers = []
+    agieval_numbers = []
+
+    # 读取文件
+    with open(file_path, 'r') as file:
+        # 读取每一行
+        for line in file:
+            match = re.search(r'(\d+\.\d+|\d+)$', line)
+            if match:
+                # 如果找到数字，将其添加到相应的列表中
+                number = float(match.group(1))
+
+                if line.startswith('ceval') and 'c-eval' in keys:
+                    ceval_numbers.append(number)
+                elif line.startswith('cmmlu') and 'cmmlu' in keys:
+                    cmmlu_numbers.append(number)
+                elif line.startswith('mmlu') and 'mmlu' in keys:
+                    mmlu_numbers.append(number)
+                elif line.startswith('GaokaoBench') and 'gaokao' in keys:
+                    gaokao_numbers.append(number)
+                elif line.startswith('bbh') and 'bbh' in keys:
+                    bbh_numbers.append(number)
+                elif line.startswith('agieval') and 'agieval' in keys:
+                    agieval_numbers.append(number)
+
+    return ceval_numbers, cmmlu_numbers, mmlu_numbers, gaokao_numbers, bbh_numbers, agieval_numbers
+
+
+def execute_sql(self, score_config):
+    task_str = os.getenv('TASK_ID', '')
+    task_id = int(task_str)
+    model_name = os.getenv('MODEL_NAME', '')
+    SQLALCHEMY_DATABASE_URI = os.getenv('MYSQL_SERVICE', '')
+
+    try:
+        if SQLALCHEMY_DATABASE_URI:
+            import sqlalchemy.engine.url as url
+            uri = url.make_url(SQLALCHEMY_DATABASE_URI)
+            """Inits the Myapp application"""
+            import pymysql
+            # 创建连接
+            conn = pymysql.connect(host=uri.host, port=uri.port, user=uri.username, password=uri.password,
+                                   charset='utf8')
+            # 创建游标
+            cursor = conn.cursor()
+
+            # 选择数据库
+            cursor.execute("USE kubeflow;")
+
+            score = json.dumps(score_config, indent=4, ensure_ascii=False)
+            sql = "INSERT INTO model_evaluation_report (model_name, eval_mode, performance_metric, effect_metric, evaluation_id, create_user_id, evaluation_job_id) VALUES ('%s','%s','%s','%s', %d, %d, %d);" % (
+                model_name, '', '', score, task_id, 0, task_id)
+            print(sql)
+            cursor.execute(sql)
+
+            conn.commit()
+    except Exception as e:
+        print(e)
+        self.logger.info(f'update table failed {str(e)}')
+    finally:
+        if SQLALCHEMY_DATABASE_URI:
+            cursor.close()
+            conn.close()
 
     def summarize(
         self,
